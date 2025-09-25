@@ -16,13 +16,31 @@ def detect_person_in_image(image_filename):
     print(f"Using device: {device}")
     
     # Load model
-    model_path = "person_detector_final.pth"
+    model_path = "../models/person_detector_final.pth"
     if not os.path.exists(model_path):
-        return {
-            "error": "No trained model found!",
-            "detections": [],
-            "outputFilename": None
-        }
+        print(f"Model file not found at {model_path}, trying to download...")
+        try:
+            import subprocess
+            result = subprocess.run(['python3', '../running-scripts/download_model.py'], capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"Download failed: {result.stderr}")
+                return {
+                    "error": f"No trained model found and download failed: {result.stderr}",
+                    "detections": [],
+                    "outputFilename": None
+                }
+            if not os.path.exists(model_path):
+                return {
+                    "error": "No trained model found and download failed!",
+                    "detections": [],
+                    "outputFilename": None
+                }
+        except Exception as e:
+            return {
+                "error": f"No trained model found and download failed: {str(e)}",
+                "detections": [],
+                "outputFilename": None
+            }
     
     print(f"Loading model: {model_path}")
     
@@ -36,8 +54,12 @@ def detect_person_in_image(image_filename):
     print("Model loaded successfully!")
     
     # Process the specific image
-    image_dir = "image"
-    img_path = os.path.join(image_dir, image_filename)
+    # Handle both relative and absolute paths
+    if os.path.isabs(image_filename) or image_filename.startswith('../'):
+        img_path = image_filename
+    else:
+        image_dir = "image"
+        img_path = os.path.join(image_dir, image_filename)
     
     if not os.path.exists(img_path):
         return {
@@ -72,7 +94,8 @@ def detect_person_in_image(image_filename):
         print(f"   Filtered out (false positives): {len(filtered_results['filtered_boxes'])}")
         
         # Create clean visualization
-        output_filename = create_clean_visualization(img, filtered_results, image_filename)
+        filename_only = os.path.basename(image_filename)
+        output_filename = create_clean_visualization(img, filtered_results, filename_only)
         
         # Prepare detection results for JSON
         detections = []
@@ -278,7 +301,9 @@ if __name__ == "__main__":
     result = detect_person_in_image(image_filename)
     
     # Write result to file for Node.js to read
-    result_file = f"result_{image_filename}.json"
+    # Extract just the filename without path for the result file
+    filename_only = os.path.basename(image_filename)
+    result_file = f"result_{filename_only}.json"
     with open(result_file, 'w') as f:
         json.dump(result, f)
     

@@ -11,12 +11,12 @@ const PORT = process.env.PORT || 5000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'client/build')));
+app.use(express.static(path.join(__dirname, '../client/build')));
 
 // Create necessary directories
-const uploadDir = path.join(__dirname, 'uploads');
-const outputDir = path.join(__dirname, 'outputs');
-const imageDir = path.join(__dirname, 'image');
+const uploadDir = path.join(__dirname, '../uploads');
+const outputDir = path.join(__dirname, '../outputs');
+const imageDir = path.join(__dirname, '../image');
 
 [uploadDir, outputDir, imageDir].forEach(dir => {
   if (!fs.existsSync(dir)) {
@@ -149,14 +149,54 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
       console.log('Executing Python script directly...');
       const { exec } = require('child_process');
       
-      exec(`python detect_person.py "${uploadedFile.filename}"`, (error, stdout, stderr) => {
+      // Use python3 for Railway deployment, python for local Windows
+      const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+      exec(`cd ../running-scripts && ${pythonCmd} detect_person.py "../uploads/${uploadedFile.filename}"`, (error, stdout, stderr) => {
         clearTimeout(timeoutId); // Clear the timeout
         if (error) {
           console.error('Direct execution error:', error);
-          return res.status(500).json({ 
-            error: 'Detection failed', 
-            details: error.message 
+          console.error('stdout:', stdout);
+          console.error('stderr:', stderr);
+          
+          // Try fallback detection
+          console.log('Trying fallback detection...');
+          exec(`cd ../running-scripts && ${pythonCmd} fallback_detect.py "../uploads/${uploadedFile.filename}"`, (fallbackError, fallbackStdout, fallbackStderr) => {
+            if (fallbackError) {
+              console.error('Fallback detection also failed:', fallbackError);
+              return res.status(500).json({ 
+                error: 'Both main and fallback detection failed', 
+                details: error.message,
+                stdout: stdout,
+                stderr: stderr,
+                fallbackError: fallbackError.message,
+                fallbackStdout: fallbackStdout,
+                fallbackStderr: fallbackStderr
+              });
+            }
+            
+            console.log('Fallback detection completed');
+            console.log('Fallback stdout:', fallbackStdout);
+            
+            // Try to read result from fallback
+            const resultFile = `result_${uploadedFile.filename}.json`;
+            try {
+              if (fs.existsSync(resultFile)) {
+                const resultData = fs.readFileSync(resultFile, 'utf8');
+                const jsonResult = JSON.parse(resultData);
+                fs.unlinkSync(resultFile);
+                sendResponse(jsonResult);
+              } else {
+                throw new Error('Fallback result file not created');
+              }
+            } catch (fileError) {
+              console.error('Fallback file reading error:', fileError);
+              res.status(500).json({ 
+                error: 'Fallback detection completed but result file not found', 
+                details: fileError.message
+              });
+            }
           });
+          return;
         }
         
         console.log('Direct execution completed');
@@ -277,6 +317,101 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Person Detection API is running' });
 });
 
+// Environment check endpoint
+app.get('/api/env-check', (req, res) => {
+  const { exec } = require('child_process');
+  
+  exec('which python3 && python3 --version && which node && node --version', (error, stdout, stderr) => {
+    if (error) {
+      return res.status(500).json({
+        error: 'Environment check failed',
+        details: error.message,
+        stderr: stderr
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Environment check completed',
+      output: stdout,
+      environment: {
+        node: process.version,
+        platform: process.platform,
+        arch: process.arch
+      }
+    });
+  });
+});
+
+// Backend test endpoint
+app.get('/api/test-backend', (req, res) => {
+  console.log('Testing backend components...');
+  
+  const { exec } = require('child_process');
+  
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+  exec(`cd ../test-scripts && ${pythonCmd} test_backend.py`, (error, stdout, stderr) => {
+    if (error) {
+      console.error('Backend test error:', error);
+      return res.status(500).json({ 
+        error: 'Backend test failed', 
+        details: error.message,
+        stderr: stderr
+      });
+    }
+    
+    console.log('Backend test output:', stdout);
+    res.json({
+      success: true,
+      message: 'Backend test completed',
+      output: stdout
+    });
+  });
+});
+
+// Simple Python test endpoint
+app.get('/api/simple-test', (req, res) => {
+  console.log('Running simple Python test...');
+  
+  const { exec } = require('child_process');
+  
+  // First check if python exists (Windows uses 'python', Linux uses 'python3')
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+  const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+  exec(`${whichCmd} ${pythonCmd}`, (whichError, whichStdout, whichStderr) => {
+    if (whichError) {
+      console.error('Python not found:', whichError);
+      return res.status(500).json({ 
+        error: 'Python not found in PATH', 
+        details: whichError.message,
+        stderr: whichStderr
+      });
+    }
+    
+    console.log('Python found at:', whichStdout.trim());
+    
+    // Now try to run the Python script
+    exec(`cd ../test-scripts && ${pythonCmd} simple_test.py`, (error, stdout, stderr) => {
+      if (error) {
+        console.error('Simple test error:', error);
+        return res.status(500).json({ 
+          error: 'Simple test failed', 
+          details: error.message,
+          stdout: stdout,
+          stderr: stderr
+        });
+      }
+      
+      console.log('Simple test output:', stdout);
+      res.json({
+        success: true,
+        message: 'Simple test completed',
+        output: stdout
+      });
+    });
+  });
+});
+
 // Test endpoint to debug Python script
 app.get('/api/test-detection', (req, res) => {
   console.log('Testing Python script...');
@@ -289,7 +424,7 @@ app.get('/api/test-detection', (req, res) => {
     timeout: 120000
   };
 
-  PythonShell.run('detect_person.py', options, (err, results) => {
+  PythonShell.run('../running-scripts/detect_person.py', options, (err, results) => {
     if (err) {
       console.error('Python test error:', err);
       return res.status(500).json({ error: 'Python test failed', details: err.message });
