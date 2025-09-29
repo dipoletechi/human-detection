@@ -58,7 +58,7 @@ person-detection-app/
 1. **Clone the repository**
    ```bash
    git clone https://github.com/dipoletechi/human-detection.git
-   cd obejctIdentifyApp
+   cd human-detection
    ```
 
 2. **Install all dependencies**
