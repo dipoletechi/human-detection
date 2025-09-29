@@ -57,7 +57,7 @@ person-detection-app/
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/manishnegi120491/obejctIdentifyApp.git
+   git clone https://github.com/dipoletechi/human-detection.git
    cd obejctIdentifyApp
    ```
 
